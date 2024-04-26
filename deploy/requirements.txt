@@ -1,0 +1,6 @@
+boto3
+azure-mgmt-containerinstance 
+azure-identity
+azure-mgmt-subscription
+azure-mgmt-resource
+azure-mgmt-network

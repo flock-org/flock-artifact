@@ -1,0 +1,68 @@
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.run
+
+# Visual Studio Code generated files
+.vscode/
+*.vscode/
+*.vscode-launch.json
+*.vscode-tasks.json
+
+# CMake files
+CMakeLists.txt.user
+CMakeFiles/
+cmake-build*/
+
+# Other generated files
+Makefile
+*.Makefile
+*.mk
+
+# Editor-specific swap files
+*~.nfs*
+*.swp
+*.swo
+*.swx
+*.bak
+*.backup
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+
+# Build system caches
+*.cache
+*.sass-cache
+*.gradle
+.bazel
+
+# Other project-specific files
+config.mk
+build/
+install_manifest.txt
+compile_commands.json

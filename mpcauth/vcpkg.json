@@ -1,0 +1,7 @@
+{
+    "name": "emp-gcp",
+    "version-string": "unversioned",
+    "dependencies": [
+      "functions-framework-cpp"
+    ]
+  }

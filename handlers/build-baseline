@@ -1,0 +1,57 @@
+#!/bin/bash
+
+cd ../pir
+
+# PIR Builds & Installations
+sudo apt install apt-transport-https curl gnupg -y
+curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor >bazel-archive-keyring.gpg
+sudo mv bazel-archive-keyring.gpg /usr/share/keyrings
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bazel-archive-keyring.gpg] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
+
+sudo apt update && sudo apt install bazel
+
+bazel build //:client_gen_pir_requests_bin
+bazel build //:server_handle_pir_requests_bin
+bazel build //:client_handle_pir_responses_bin
+
+cd ../mpcauth
+
+# Install required dependencies
+apt-get update && \
+    apt-get install -y \
+        build-essential \
+        cmake \
+        curl \
+        git \
+        libgmp-dev \
+        libssl-dev \
+        libcurl4-openssl-dev \
+        pkg-config \
+        tar \
+        unzip \
+        zip \
+        libc-dev \
+        ninja-build \
+        python3-pip
+
+# Pip install
+pip3 install flask
+pip3 install boto3
+pip3 install ecdsa
+pip3 install merkletools
+pip3 install google-cloud-storage
+pip3 install azure-storage-blob
+
+# Set environment variable
+export CXXFLAGS="-mssse3 -maes"
+
+mkdir build
+cd build
+cmake ..
+make auth_passcode_2PC
+make auth_passcode_3PC
+make aes_ctr
+
+
+mkdir -p /usr/local/circuits
+cp ../mpcauth/files/* /usr/local/circuits

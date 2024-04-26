@@ -1,0 +1,4 @@
+/results/*
+/figures/*
+/handlers/plots
+__pycache__

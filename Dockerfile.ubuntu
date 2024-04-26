@@ -1,0 +1,107 @@
+# Use the official Ubuntu base image
+FROM ubuntu:22.04 as build-image
+
+# Set environment variables to non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set working directory
+WORKDIR /app
+
+# Install required dependencies
+RUN apt-get update && \
+    apt-get install -y \
+        build-essential \
+        make \
+        cmake \
+        curl \
+        libssl-dev \
+        libcurl4-openssl-dev \
+        pkg-config \
+        ninja-build \
+        zip \
+        git
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    apt-transport-https \
+    curl \
+    gnupg && \
+    curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor >bazel-archive-keyring.gpg && \
+    mv bazel-archive-keyring.gpg /usr/share/keyrings && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bazel-archive-keyring.gpg] https://storage.googleapis.com/bazel-apt stable jdk1.8" | tee /etc/apt/sources.list.d/bazel.list && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bazel && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN bazel version
+COPY ./pir /app/pir 
+WORKDIR /app/pir
+# Build using Bazel
+RUN bazel build //:server_handle_pir_requests_bin
+
+# Install Go
+ENV GOLANG_VERSION 1.20.2
+RUN curl -sSL https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz \
+    | tar -v -C /usr/local -xz
+# Set up the Go environment variables
+ENV GOPATH /go
+ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
+
+# Copy Certs & Relay
+COPY ./go.work /app
+COPY ./go.work.sum /app/go.work.sum
+COPY ./certs /app/certs
+COPY ./relay /app/relay
+
+# Copy internal files
+COPY ./internal /app/internal
+WORKDIR /app/internal/cmd/signing
+RUN go build -o signing .
+
+# Build mpcauth
+COPY ./mpcauth /app/mpcauth
+WORKDIR /app/mpcauth/build
+RUN cmake .. 
+# RUN make -j auth_passcode_2PC
+RUN make -j auth_passcode_3PC
+RUN make -j aes_ctr
+
+
+COPY ./files /app/files
+
+# Prepare handlers
+ARG FUNCTION_DIR
+RUN mkdir -p /app/handlers
+COPY handlers/handler*.py /app/handlers/
+COPY handlers/requirements.txt /app/handlers/
+COPY handlers/storage.py /app/handlers/
+COPY util/*_util.py /app/handlers/
+
+# Multi-stage build: grab a fresh copy of the Ubuntu 20.04 image
+FROM ubuntu:22.04
+
+# Install Python and pip
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip
+
+# Copy in the build image dependencies
+COPY --from=build-image /app/handlers  /app/handlers
+COPY --from=build-image /app/files /app/files
+COPY --from=build-image /app/mpcauth/data /app/data
+COPY --from=build-image /app/mpcauth/build/lib /app/mpcauth/build/lib
+COPY --from=build-image /app/mpcauth/build/bin /app/mpcauth/build/bin
+COPY --from=build-image /app/internal/cmd/signing/signing /usr/local/bin/signing
+COPY --from=build-image /app/certs /app/certs
+COPY --from=build-image /app/pir/bazel-bin/server_handle_pir_requests_bin  /app/pir/bazel-bin/server_handle_pir_requests_bin
+
+EXPOSE 443
+EXPOSE 5000-7000
+WORKDIR /app/handlers
+
+RUN pip3 install --no-cache-dir -r requirements.txt
+# RUN apt-get remove -y --purge python3-pip
+# CMD ["python3", "./handler.py"]
+# CMD ["gunicorn", "-w=8", "--bind=0.0.0.0:8000", "--certfile=/app/certs/client.pem", "--keyfile=/app/certs/client.key", "handler:app"]
+# CMD ["gunicorn", "-w=8", "--bind=0.0.0.0:5000", "handler:app"]
+CMD exec gunicorn --bind :5000 --workers 4 --timeout 120 handler:app
