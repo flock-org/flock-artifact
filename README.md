@@ -1,87 +1,110 @@
 # Artifact Evaluation for Flock
 
-Flock is a framework for developing and deploying on-demand distributed-trust. 
+Flock is a framework deploying on-demand distributed-trust.
 
-## Overview & Setups
-We have a total of five servers. One server simulates the client and is placed in AWS, one server is used as the secure relay that routes traffic between Flock's serverless containers. The other three servers are the distributed-trust nodes, located in AWS, GCP, and Azure. 
+## Overview & Setup
 
-We provide a ssh key `creds/flock.pem` that gives you access to all servers. To avoid unprotected key file error, first change the permission of the key with the following command: 
-```chmod 600 creds/flock.pem```
+- [Overview & Setup](#overview--setup)
+- [Baseline-Specific Setup](#baseline-specific-setup)
+- [Flock-Specific Setup](#flock-specific-setup)
+- [Reproduce Latency Results in Table 3 and Figure 4](#reproduce-latency-results-in-table-3-and-figure-4)
+- [Reproduce Throughput Results in Figure 6](#reproduce-throughput-results-in-figure-6)
+- [Reproduce Cost Results in Table 5 and Figure 7](#reproduce-cost-results-in-table-5-and-figure-7)
+- [Download all Figures](#download-all-figures)
+- [Reproduce Relay Microbenchmarks in Table 4](#reproduce-relay-microbenchmarks-in-table-4)
+- [Cleanup](#cleanup)
+- [Contact Us](#contact-us)
 
-First, Prepare 5 separate terminals and ssh into all these servers.
+**We have provisioned a single set of these VMs for our artifact evaluators, and it is important that they are not used concurrently by different reviewers. Before reviewing our artifact please add your reviewer ID (e.g. A, B, or C) next to the date which you will be conducting the evaluation [on this sign-up sheet](https://docs.google.com/spreadsheets/d/1ika5A_H3YVywQKOScfom_wz2PBXXnT-mGB8C9hbLyxQ/edit?usp=sharing). If a date is claimed, please do not conduct the experiments at the same time as another reviewer. Please contact us if you have issues with this.**
 
-The client server: `ssh -i creds/flock.pem ubuntu@ec2-13-57-39-94.us-west-1.compute.amazonaws.com`
+We have a total of five servers:
+- One AWS server simulates the user's client
+- One Azure server is used as the secure relay that routes traffic between Flock's serverless containers.
+- The other three servers are the distributed-trust parties in the baseline setup, located in AWS, GCP, and Azure. The Azure server is the application provider server.
+- For the Flock setup, we have serverless containers deployed in AWS Lambda and Google Cloud Run.
 
-The AWS server: `ssh -i creds/flock.pem ubuntu@ec2-54-177-190-187.us-west-1.compute.amazonaws.com`
+**Step 1:** Clone the artifact evaluation repository: `git clone https://github.com/flock-org/flock-dev.git`
 
-The GCP server: `ssh -i creds/flock.pem sijun@34.94.106.191`
+**Step 2:** Prepare 5 separate terminals for all relevant servers and ssh into all these servers using the below commands. We provide a ssh key `flock.pem` that gives you access to all servers. This key is uploaded to the Artifact Appendix of HotCRP. To avoid unprotected key file error, first change the permission of the key with the following command: 
+```chmod 600 flock.pem```
 
-The Azure server: `ssh -i creds/flock.pem sijuntan@104.42.77.164`
+- The client server: `ssh -i flock.pem ubuntu@ec2-13-57-39-94.us-west-1.compute.amazonaws.com`
 
-The relay: `ssh -i creds/flock.pem azureuser@40.78.94.35`
+- The AWS server: `ssh -i flock.pem ubuntu@ec2-54-177-190-187.us-west-1.compute.amazonaws.com`
 
+- The GCP server: `ssh -i flock.pem sijun@34.94.106.191`
 
-### Setting up baseline
+- The Azure server: `ssh -i flock.pem sijuntan@104.42.77.164`
 
-First, ssh into all the three servers (AWS, Azure, GCP). Flock's code is package into a Docker container, and we already uploaded to Docker's container registry. Use the following command to pull the Docker image from the registry. 
+- The relay: `ssh -i flock.pem azureuser@40.78.94.35`
+
+Note down which terminal corresponds to which server, as this will be relevant throughout the experiments.
+
+*Note:* Due to the many moving parts in our system and the variance in cloud provisioning storage and compute resources across the 3 different cloud providers and regions, we expect that at different points in time, there will be slight fluctuations in the latency and throughput values. The point of our evaluation was to show that Flock performs comparably to the baseline, and your results should reflect this regardless of such variations.
+
+### Baseline-Specific Setup
+
+**Step 1:** Flock's code is packaged into a Docker container in Docker's container registry. In each of the three servers (AWS, GCP, and Azure), use the following command to pull our Docker image from the registry. Note that this is not required for the client or relay servers.
 ```
-sudo docker pull sijuntan/flock:ubuntu
+sudo docker pull sijuntan/flock:artifact
 ```
 
-On each server, first create a tmux session with `tmux new -s flock`. If the tmux session is already created, enter the tmux session with `tmux a -t flock`. Then execute the following command. This will start running Flock's Docker container. 
+**Step 2:** On each server, first create a tmux session with `tmux new -s flock`. Once the tmux session is already created, enter the tmux session with `tmux a -t flock`. Then execute the following command. This will start running Flock's Docker container. 
 
 Use `sudo docker ps` to check if the container if already running. If the container is running, the terminal will output something like:
 ```
 CONTAINER ID   IMAGE                   COMMAND                  CREATED       STATUS       PORTS                                                                                                                 NAMES
-9ba698d5c895   sijuntan/flock:ubuntu   "gunicorn --certfile…"   2 hours ago   Up 2 hours   0.0.0.0:443->443/tcp, :::443->443/tcp, 0.0.0.0:5000-5200->5000-5200/tcp, :::5000-5200->5000-5200/tcp, 5201-7000/tcp   adoring_bassi
+9ba698d5c895   sijuntan/flock:artifact   "gunicorn --certfile…"   2 hours ago   Up 2 hours   0.0.0.0:443->443/tcp, :::443->443/tcp, 0.0.0.0:5000-5200->5000-5200/tcp, :::5000-5200->5000-5200/tcp, 5201-7000/tcp   adoring_bassi
 ```
-If so, you can stop the Docker container via `sudo docker stop <container_id>`. On each VM, start the Docker container via the following commands:
+If so, you can stop the Docker container via `sudo docker stop <container_id>`. On each of the AWS, GCP and Azure VMs, start the Docker container via the following commands:
 
 <a id="setup"></a>
 AWS:
 ```
-sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/0/cert.pem)" -e RELAY_KEY="$(cat certs/0/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/1/cert.pem)" -e PARTY_KEY="$(cat certs/user1/1/key.pem)" -e STORAGE="aws" sijuntan/flock:ubuntu gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
+sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/1/cert.pem)" -e RELAY_KEY="$(cat certs/1/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/1/cert.pem)" -e PARTY_KEY="$(cat certs/user1/1/key.pem)" -e STORAGE="aws" sijuntan/flock:artifact gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
 ```
 
 GCP:
 ```
-sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/0/cert.pem)" -e RELAY_KEY="$(cat certs/0/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/0/cert.pem)" -e PARTY_KEY="$(cat certs/user1/0/key.pem)" -e STORAGE="gcp" sijuntan/flock:ubuntu gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
+sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/0/cert.pem)" -e RELAY_KEY="$(cat certs/0/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/0/cert.pem)" -e PARTY_KEY="$(cat certs/user1/0/key.pem)" -e STORAGE="gcp" sijuntan/flock:artifact gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
 ```
 
 Azure:
 ```
-sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/2/cert.pem)" -e RELAY_KEY="$(cat certs/2/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/2/cert.pem)" -e PARTY_KEY="$(cat certs/user1/2/key.pem)" -e STORAGE="azure" sijuntan/flock:ubuntu gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
+sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/2/cert.pem)" -e RELAY_KEY="$(cat certs/2/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/2/cert.pem)" -e PARTY_KEY="$(cat certs/user1/2/key.pem)" -e STORAGE="azure" sijuntan/flock:artifact gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
 ```
 
+### Flock-Specific Setup
 
-### Setting up Flock & Relay
-Flock has two endpoint from AWS and GCP, and share the Azure server with the baseline:
+Flock has two serverless deployments in AWS and GCP, and shares the Azure server with the baseline as the application provider's party:
 
 Flock's AWS Lambda endpoint: `https://pvivrsctz64i2fvtyadqp6fioa0euhix.lambda-url.us-west-1.on.aws/`
 
-Flock's GCP cloud run endpoint: `https://flock-wf6p6sulza-wl.a.run.app`
+Flock's GCP Cloud Run endpoint: `https://flock-wf6p6sulza-wl.a.run.app`
 
-Flock's AWS Lambda and GCP cloud run end point is already up and running. You need to additionally start the Flock relay.
+Flock's AWS Lambda and GCP Cloud Run endpoints are already up and running. You need to additionally start the Flock relay.
 
-Log into the relay server. The script to start the relay is in the `/relay` folder of `flock-dev`. `cd` into it and execute the following command:
+You should have already sshed into the relay server. Next, the script to start the relay is in the `/relay` folder of `flock-dev`. Run the following:
 ```
+cd flock-dev/relay
 bash start_relay.sh
 ```
 
 This will start 4 relay processes running in the background. You can use `ps` to check if they are there. Also, you can use `pkill -f relay` to kill all the relay processes running in the background. 
 
 
-## Reproduce Latency Results in Table 3 and Figure 4. (~30 minutes)
+## Reproduce Latency Results in Table 3 and Figure 4 
 
-Log into the client server (`ubuntu@ec2-13-57-39-94.us-west-1.compute.amazonaws.com`) via ssh, and create a tmux session with `tmux new -s flock`. The latency server will sends requests to Flock's baseline server as well as serverless endpoints. 
+(~30 minutes)
 
-First, go to the `client` repo where all the bash scripts are located:
+You should have already sshed into the client server and created a tmux session with `tmux new -s flock`. The client server will sends requests to the AWS, GCP, and Azure VMs for the baseline latency benchmarks, as well as the serverless endpoints for the Flock latency benchmarks. 
+
+First, go to the `client` repo in the client server where all the bash scripts are located:
 ```
 cd flock-dev/client
 ```
 
-All the following operations will be executed 10 times, and the average will be computed.
-First, go to the client server and execute the following script
+All the following operations will be executed 10 times, and the average will be computed. Execute the following scripts:
 
 ```
 bash latency_baseline.sh
@@ -89,19 +112,37 @@ bash latency_flock.sh
 python3 figure_latency.py
 ```
 
-The first two lines will run all the latency experiments and save the results in the `/results` folder as json files. Then, `figure_latency.py` will read these results and generate the corresponding figure. The figure will be generated in the `./figures` folder.
+The first two lines will run all the latency experiments and save the results in the `/results` folder as json files. Then, `figure_latency.py` will read these results and generate the corresponding figure. The figure will be generated in the `./figures` folder, which we will later show you how to download.
 
+Note that for the PIR and freshness cryptographic modules, these are two-party operations and therefore you may notice that some VMs are unused at some points during the latency benchmarks.
 
-## Reproduce Throughput Results in Figure 6 (~60 min)
-We have an additional AWS and GCP large server that is used to benchmark throughput for baseline. This is because the both servers gets saturated before the Azure server so baseline's throughput is bottlenecked by them. Since both baseline and Flock uses the Azure server, we choose larger servers for AWS and GCP to saturate Azure in the baseline. 
+## Reproduce Throughput Results in Figure 6 
 
-AWS large server: `ec2-54-177-245-145.us-west-1.compute.amazonaws.com`
+(~60 min)
 
-GCP large server: `sijun@35.236.13.119`
+We have an additional AWS and GCP large server that is used to benchmark throughput for baseline. This is because the both servers get saturated before the Azure server,so the baseline's throughput is bottlenecked by them. In order to get the most realistic measurements since both baseline and Flock uses the Azure server, we choose larger servers for AWS and GCP to saturate the Azure application provider server.
 
-Log into these server via `creds/flock.pem`, and use the same command from [the Setup section](#setup) to start the AWS and GCP server.
+ssh into the following large servers. For this particular experiment only, these will be used in place of the AWS and GCP servers you previously logged into for some of our cryptographic modules. *Make sure to keep the original AWS and GCP servers open as well.*
 
-The script to measure throughput is located in `client/throughput.py`. The throughput script will launch https requests in multiple threads simutaneously. It goes over a for loop of increasing number of threads, each trial lasts ~90 second, and we record the number of requests completed between 15-75 seconds. We store the throughput results in a json file in the `results` folder for each threads we tested. When drawing the figure, we will take the maximum throughput from these trials for both Flock and baseline.
+Log into these server via `flock.pem`, and use the same command from [the Setup section](#setup) to start the AWS and GCP server:
+
+- AWS large server: `ssh -i flock.pem ubuntu@ec2-54-177-245-145.us-west-1.compute.amazonaws.com`
+
+- GCP large server: `ssh -i flock.pem sijuntan@35.236.13.119`
+
+Now run the following to pull the Docker containers:
+
+AWS:
+```
+sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/1/cert.pem)" -e RELAY_KEY="$(cat certs/1/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/1/cert.pem)" -e PARTY_KEY="$(cat certs/user1/1/key.pem)" -e STORAGE="aws" sijuntan/flock:artifact gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
+```
+
+GCP:
+```
+sudo docker run -p 443:443 -p  5000-5200:5000-5200 -e RELAY_CA="$(cat certs/frelay-ca.pem)" -e RELAY_CERT="$(cat certs/0/cert.pem)" -e RELAY_KEY="$(cat certs/0/key.pem)" -e USER_CA="$(cat certs/user1/user-ca.pem)" -e PARTY_CERT="$(cat certs/user1/0/cert.pem)" -e PARTY_KEY="$(cat certs/user1/0/key.pem)" -e STORAGE="gcp" sijuntan/flock:artifact gunicorn --certfile="/app/certs/client.pem" --keyfile="/app/certs/client.key" --bind="0.0.0.0:443" --timeout 120 -w 8 handler:app
+```
+
+The script to measure throughput is located in `client/throughput.py`. The throughput script will launch https requests in multiple threads simutaneously. It goes over a for loop of increasing number of threads, each trial lasts ~90 second, and we record the number of requests completed between 15-75 seconds. We store the throughput results in a json file in the `results` folder for each threads we tested. When plotting the figure, we will take the maximum throughput from these trials for both Flock and the baseline.
 
 ```
 bash throughput_baseline.sh
@@ -111,14 +152,8 @@ python3 figure_throughput.py
 
 Similarly, the first two lines will run all the throughput experiments and save the results in the `/results` folder as json files. Then, `figure_throughput.py` will read these results and generate the corresponding figure. The figure will be generated in the `./figures` folder.
 
+Again, we will show you how to download all your produced figures at once in a bit. If everything works well, the figures should closely resemble the following:
 
-## Download all figures
-You can download all generated figures via the following command.
-```
-scp -i creds/flock.pem ubuntu@ec2-13-57-39-94.us-west-1.compute.amazonaws.com:~/flock-dev/figures .
-```
-
-If everything works well, the figures should look like the following:
 ### Latency Figures (Figure 4)
 <table>
   <tr>
@@ -133,40 +168,40 @@ If everything works well, the figures should look like the following:
 </table>
 
 ### Throughput Figures (Figure 6)
-
-
+<img src="./figures_archive/throughput.png" alt="Throughput" width="400">
 
 ## Reproduce Cost Results in Table 5 and Figure 7
+
+We offer a python script that computes our calculations for cloud cost. The script hardcodes the cloud pricing statistics as of December 2023. Run the below in order to generate the data seen in the cost table:
+
 ```
 python3 cost.py
 ```
 
-## Reproduce Relay Microbenchmarks in Table 4 (~30 min)
+## Download all Figures & Results
+You can download all generated figures and json results via the following command:
+```
+scp -r -i flock.pem ubuntu@ec2-13-57-39-94.us-west-1.compute.amazonaws.com:~/flock-dev/figures .
+scp -r -i flock.pem ubuntu@ec2-13-57-39-94.us-west-1.compute.amazonaws.com:~/flock-dev/results .
+```
+
+## Reproduce Relay Microbenchmarks in Table 4 
+
+(~30 min)
+
+Note: We use slightly different clouds for each of the VMs for the different parties in these microbenchmarks compared to the rest of the experiments, so please take note!
 
 ### Baseline Results (Row 1 of Table 4)
 
-#### Throughput
+**Throughput**
 
-Start test server on GCP, which runs goben
+Start test server on GCP, which runs [goben](https://github.com/udhos/goben/tree/master), a go-based throughput measurement tool:
 
-<<<<<<< HEAD
-=======
-## Reproduce Relay Microbenchmarks in Table 4
-
-### Baseline Results 
-
-#### Throughput
-
-Start Goben server on GCP
-
-```
-./scripts/throughput.sh server
->>>>>>> b849bd4 (Throughput microbenchmark results)
 ```
 ~/scripts/throughput.sh server
 ```
 
-Start test client on Azure, which runs goben 10 times and prints out average
+Start test client on Azure, which runs goben 10 times and prints out average:
 
 ```
 ~/scripts/throughput.sh client 34.94.106.191
@@ -174,9 +209,9 @@ Start test client on Azure, which runs goben 10 times and prints out average
 
 Compare this value to "Per-Conn. Gbps" of Row 1.
 
-#### Latency
+**Latency**
 
-Start server on GCP
+Start the server on GCP:
 
 ```
 cd flock-dev
@@ -187,7 +222,7 @@ export MODE=server
 ./relay/bin/client_func
 ```
 
-Start Client on Azure
+Start a client on Azure:
 
 ```
 cd flock-dev
@@ -201,23 +236,22 @@ export TARGET=34.94.106.191:9000
 
 This will print out the baseline latency over 10 iterations
 Compare this value to Setup Latency (ms) Total in row 1.
-Note: Expect this baseline latency to be close to 40, which is higher than the number we observed during our runs for the paper.
-This is because of cloud provisioning and other factors, which could contribute to increase in baseline latency.
+Note: Due to the variance in cloud provisioning storage and compute resources across the 3 different cloud providers and regions, we emphasize that the baseline latency may vary by < +-20 ms from the paper. However, this is a fixed cost, and the delta observed in comparison with Flock’s latency should be comparable to the paper.
 
 ### Relay Results
 
-Start Flock Relay on AWS
+Start Flock Relay on AWS:
 
 ```
 cd ~/flock-dev
 ./relay/bin/relay start --port 9000
 ```
 
-#### Throughput
+**Throughput**
 
-Start Goben on GCP
+Start Goben on GCP:
 
-Set Env Variables required to contact relay
+Set Env Variables required to contact relay:
 
 ```
 cd ~/flock-dev
@@ -231,15 +265,15 @@ export PARTY_KEY=$(cat certs/user1/1/key.pem)
 export DEST=0
 ```
 
-Start throughput test using goben
+Start throughput test using goben:
 
 ```
 ~/scripts/throughput.sh relay
 ```
 
-Start Goben on Azure
+Start Goben on Azure:
 
-Set Env Variables required to contact relay
+Set Env Variables required to contact relay:
 
 ```
 cd ~/flock-dev
@@ -253,7 +287,7 @@ export PARTY_KEY=$(cat certs/user1/0/key.pem)
 export DEST=1
 ```
 
-Start throughput test using Goben
+Start throughput test using Goben:
 
 ```
 ~/scripts/throughput.sh relay
@@ -261,11 +295,11 @@ Start throughput test using Goben
 
 Compare this value to "Per-Conn. Gbps" of Row 2.
 
-#### Latency
+**Latency**
 
-Make sure the relay is running in the AWS VM
+Make sure the relay is running in the AWS VM.
 
-Start Client Function in GCP
+Start Client Function in GCP:
 
 ```
 cd ~/flock-dev
@@ -275,7 +309,7 @@ export TEST=latency
 ./relay/bin/client_func
 ```
 
-Start Client Function in Azure
+Start Client Function in Azure:
 
 ```
 cd ~/flock-dev
@@ -286,10 +320,9 @@ export TEST=latency
 ./relay/bin/client_func
 ```
 Now, S2R latency and E2E latency will be printed on the azure VM.
-Note: Expect this e2e latency to be close to 70, which is higher than the number we observed during our runs for the paper.
-This is because baseline latency between azure and gcp vm increased in the current setup.
+Note: Again, like before, due to the variance in cloud provisioning storage and compute resources across the 3 different cloud providers and regions, we emphasize that the baseline latency may vary by < +-20 ms from the paper. However, this is a fixed cost, and the delta observed in comparison with baseline’s latency should be comparable to the paper.
 
-Now stop the relay running in AWS VM by pressing Ctrl+c or the following command
+Now stop the relay running in AWS VM by pressing Ctrl+c or the following command:
 
 ```
 killall relay
@@ -297,232 +330,35 @@ killall relay
 
 ### Wireguard
 
-Start Wireguard Relay on the AWS VM
+Start Wireguard Relay on the AWS VM:
 
 ```
 cd ~/serverless-relay
 wgrelay start --port 9000
 ```
 
-Start Wireguard setup on GCP VM
+Start Wireguard setup on GCP VM:
 
 ```
 ~/scripts/wireguard.sh gcp
 ```
 
-Start Wireguard setup on Azure VM
+Start Wireguard setup on Azure VM:
 
 ```
 ~/scripts/wireguard.sh azure
 ```
 
-#### Throughput
+**Throughput**
 
 
-Run Goben server on the GCP VM
+Run Goben server on the GCP VM:
 
 ```
 ~/scripts/throughput.sh server
-
-Start client on Azure, which runs goben 10 times and prints out average
-
-```
-./scripts/throughput.sh client 34.94.106.191
 ```
 
-#### Latency
-
-Start server on GCP
-
-```
-cd flock-dev
-export USER=user1
-export NAME=1
-export DEST=0
-export MODE=server
-./relay/bin/client_func
-```
-
-Start Client on azure
-
-```
-cd flock-dev
-export USER=user1
-export NAME=0
-export DEST=1
-export MODE=client
-export TARGET=34.94.106.191:9000
-./relay/bin/client_func
-```
-
-### Relay Results
-
-Start Relay on AWS
-
-```
-cd ~/flock-dev
-./relay/bin/relay start --port 9000
-```
-
-#### Throughput
-
-Start Goben on GCP
-
-Set Env Variables required to contact relay 
-
-```
-export RELAY=54.177.190.187:9000
-export RELAY_CA=$(cat certs/frelay-ca.pem)
-export RELAY_CERT=$(cat certs/1/cert.pem)
-export RELAY_KEY=$(cat certs/1/key.pem)
-export USER_CA=$(cat certs/user1/user-ca.pem)
-export PARTY_CERT=$(cat certs/user1/1/cert.pem)
-export PARTY_KEY=$(cat certs/user1/1/key.pem)
-export DEST=0
-```
-
-Start throughput test using goben
-
-```
-./scripts/throughput.sh relay
-```
-
-Start Goben on Azure
-
-Set Env Variables required to contact relay 
-
-```
-export RELAY=54.177.190.187:9000
-export RELAY_CA=$(cat certs/frelay-ca.pem)
-export RELAY_CERT=$(cat certs/0/cert.pem)
-export RELAY_KEY=$(cat certs/0/key.pem)
-export USER_CA=$(cat certs/user1/user-ca.pem)
-export PARTY_CERT=$(cat certs/user1/0/cert.pem)
-export PARTY_KEY=$(cat certs/user1/0/key.pem)
-export DEST=1
-```
-
-Start throughput test using Goben
-
-```
-./scripts/throughput.sh relay
-```
-
-#### Latency
-
-Start Client Function in GCP
-
-```
-cd flock-dev
-export RELAY=54.177.190.187:9000
-export RELAY_CA=$(cat certs/frelay-ca.pem)
-export RELAY_CERT=$(cat certs/1/cert.pem)
-export RELAY_KEY=$(cat certs/1/key.pem)
-export USER_CA=$(cat certs/user1/user-ca.pem)
-export PARTY_CERT=$(cat certs/user1/1/cert.pem)
-export PARTY_KEY=$(cat certs/user1/1/key.pem)
-export DEST=0
-export TEST=latency
-./relay/bin/client_func
-```
-
-Start Client Function in Azure
-
-```
-cd flock-dev
-export RELAY=54.177.190.187:9000
-export RELAY_CA=$(cat certs/frelay-ca.pem)
-export RELAY_CERT=$(cat certs/0/cert.pem)
-export RELAY_KEY=$(cat certs/0/key.pem)
-export USER_CA=$(cat certs/user1/user-ca.pem)
-export PARTY_CERT=$(cat certs/user1/0/cert.pem)
-export PARTY_KEY=$(cat certs/user1/0/key.pem)
-export DEST=1
-export CONN=0
-./relay/bin/client_func
-```
-
-### Wireguard
-
-Start Wireguard Relay on the AWS VM
-
-```
-cd serverless-relay
-wgrelay start --port 9000
-```
-
-Start Wireguard Proxy on both VMs
-
-```
-wgproxy 8000 54.177.190.187:9000 & 
-
-```
-
-
-Setup Wireguard on Azure
-
-```
-sudo ip link del wireguard1
-sudo tunnel-benchmarking --tunnel-type=wireguard \
---datapath=linux --host-name=host1 \
---remote-hosts=host2:127.0.0.1 \
---wireguard-public-key=ARq3ziAZVWj5IQ202TskQEsl3GQQrQ7NnJAKOv2F5kE= \
---wireguard-private-key=uCmjq4myg7GGCZP6Shu7xXuyVzyeyedg/VhZrVJtck4= 
-
-```
-
-Setup Wireguard on GCP
-
-```
-sudo ip link del wireguard2
-sudo tunnel-benchmarking --tunnel-type=wireguard \
---datapath=linux --host-name=host2 \
---remote-hosts=host1:127.0.0.1 \
---wireguard-public-key=/tcWr8BES3jzSbE2vGxH+PAWqEawE2/2tWe7+LUVHGU= \
---wireguard-private-key=MOp5jPFweMpLPNSgkp4CLMWzJO2Yh7ASlIQpPAQxwXA= 
-
-```
-
-
-#### Throughput
-
-
-Run Goben server on the GCP VM
-
-```
-~/go/bin/goben
-```
-
-Run Goben client the Azure VM
-
-```
-~/go/bin/goben --hosts 10.201.2.1
-```
-
-### Latency
-
-```
-cd flock-dev
-export USER=user1
-export NAME=1
-export DEST=0
-export MODE=server
-./relay/bin/client_func
-```
-
-Start Client on azure
-
-```
-cd flock-dev
-export USER=user1
-export NAME=0
-export DEST=1
-export MODE=client
-export TARGET=34.94.106.191:9000
-./relay/bin/client_func
-```
-
-Run Goben client the Azure VM
+Run Goben client the Azure VM:
 
 ```
 ~/scripts/throughput.sh client 10.201.2.1
@@ -532,7 +368,7 @@ Compare this value to "Per-Conn. Gbps" of Row 1.
 
 ### Latency
 
-Rerun Wireguard setup on Azure VM, and setup latency would be printed
+Rerun Wireguard setup on Azure VM, and setup latency would be printed:
 
 ```
 ~/scripts/wireguard.sh azure
@@ -541,9 +377,14 @@ Rerun Wireguard setup on Azure VM, and setup latency would be printed
 Note: The latency we observed for all benchmarks would be increasing by a factor due to the current setup. However, the pattern would remain the same, e.g. baseline latency would be lower than the total latency observed with relay which would be lesser than that of wireguard
 Baseline < Relay < Wireguard is what our results convey.
 
-## Scale (Concurrent Users) tests of relay
+Now stop the relay running in AWS VM by pressing Ctrl+c or the following command:
 
-Make sure relay is running in AWS VM using the following command
+```
+killall wgrelay
+```
+## Scale (Concurrent Users) Relay Test
+
+Make sure relay is running in AWS VM using the following command:
 
 ```
 cd ~/flock-dev/
@@ -598,6 +439,25 @@ cd ~/flock-dev
 
 The Total throughput will be printed on the screen after few minutes.
 
-## Contact us
-If you run into any questions,  leave a comment or ask questions in HotCRP or email us through `sijuntan@berkeley.edu` and `daryakaviani@berkeley.edu`
+As mentioned above, please compare the individual results to the below table
 
+<img src="./figures_archive/microbenchmarks.png" alt="Relay Microbenchmarks (Table 4)" width="300">
+
+## Cleanup
+
+To ensure all the VMs are ready for the next reviewer, please conduct the following cleanup operations:
+
+- Also, run Ctrl+C on all VMs and `exit` to leave all tmux sessions.
+- Kill the relay in the Azure and AWS VMs (note that the relay for the microbenchmarks happened to be conducted in AWS and the other benchmarks is in Azure, so make sure to kill both relays):
+```
+killall relay
+```
+
+## Contact Us
+If you run into any issues or have any questions, please contact us on HotCRP or via email at `sijuntan@berkeley.edu` and `daryakaviani@berkeley.edu`, and we will reply promptly!
+
+## Debugging & Common Issues
+
+Some warnings and errors that should not concern you:
+- `warn("sha3 is not working!")`: This warning is due to an underlying library, and does not pose a problem for our system.
+- JSON decode errors may occur when there was a rate-limiting issue on behalf of one of the clouds due to our frequent queries in the benchmarks. In these cases, you do not need to do anything since the system will just try again to obtain the result.
