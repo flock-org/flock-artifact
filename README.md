@@ -167,8 +167,6 @@ Again, we will show you how to download all your produced figures at once in a b
   </tr>
 </table>
 
-### Throughput Figures (Figure 6)
-<img src="./figures_archive/throughput.png" alt="Throughput" width="400">
 
 ## Reproduce Cost Results in Table 5 and Figure 7
 
