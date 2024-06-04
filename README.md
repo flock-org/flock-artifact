@@ -2,6 +2,10 @@
 
 Flock is a framework deploying on-demand distributed-trust.
 
+**WARNING:** This is an academic proof-of-concept prototype and has not received careful code review. This implementation is NOT ready for production use.
+
+This prototype is released under the Apache v2 license (see [License](LICENSE)).
+
 ## Overview & Setup
 
 - [Overview & Setup](#overview--setup)
